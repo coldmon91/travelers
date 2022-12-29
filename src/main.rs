@@ -14,7 +14,7 @@ async fn main() {
     let addrs = stunclient::tcp_discovery(addr.ip(), 3478).await.unwrap();
     println!("[tcp] \nlo_source: {} \nmapped: {} \nxor_mapped: {}", addrs.lo_source, addrs.mapped, addrs.xor_mapped);
 
-    let addrs = stunclient::udp_discovery(addr.ip(), 3478).unwrap();
+    let addrs = stunclient::udp_discovery(addr.ip(), 3478).await.unwrap();
     println!("[udp] \nlo_source: {} \nmapped: {} \nxor_mapped: {}", addrs.lo_source, addrs.mapped, addrs.xor_mapped);
 
     //

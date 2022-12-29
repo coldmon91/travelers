@@ -1,7 +1,11 @@
-use std::net::{IpAddr, SocketAddr, UdpSocket, TcpStream};
+use std::net::{IpAddr, SocketAddr};
 use bytecodec::{DecodeExt, EncodeExt};
 use stun_codec::{Message, MessageClass, MessageDecoder, MessageEncoder, TransactionId, Attribute, rfc5389::attributes::MappedAddress};
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
+use tokio::net::{TcpStream, UdpSocket};
+
+#[path = "../utils.rs"]
+mod utils;
 
 const STUN_SERVER_PORT: u16 = 3478;
 
@@ -11,19 +15,22 @@ pub struct Addresses {
     pub xor_mapped: String,
 }
 
-pub fn udp_discovery(stunserver : IpAddr, port: u16) -> Result<Addresses, String> {
+pub async fn udp_discovery(stunserver : IpAddr, port: u16) -> Result<Addresses, String> {
     // Create a UDP socket
-    use port_scanner::local_port_available;
-    let lo_port = 51000;
-    for lo_port in 51000..53000 {
-        let is_available = local_port_available(lo_port);
-        if is_available {
-            break;
-        }
-    }
-    
+    let lo_port = utils::get_available_port();
     let lo_addr = format!("0.0.0.0:{}", lo_port);
-    let socket = UdpSocket::bind(&lo_addr).unwrap();
+    let mut addresses = Addresses {
+        lo_source: String::from(&lo_addr),
+        mapped: "".to_string(),
+        xor_mapped: "".to_string(),
+    };
+    // use tokio::net;
+    let socket : UdpSocket;
+
+    match tokio::net::UdpSocket::bind(&lo_addr).await {
+        Ok(s) => socket = s,
+        Err(e) => return Err(e.to_string()),
+    }
     let server_addr = SocketAddr::new(stunserver, port);
 
     // Create a STUN message with the BINDING request type
@@ -33,24 +40,20 @@ pub fn udp_discovery(stunserver : IpAddr, port: u16) -> Result<Addresses, String
         BINDING, 
         TransactionId::new([3; 12])
     );
-    message.add_attribute(Attribute::Software(Software::new("foo".to_owned()).unwrap()));
+    let sf = Software::new("foo".to_owned()).unwrap();
+    message.add_attribute(Attribute::Software(sf));
 
     // Encode the STUN message into a byte array
     let mut encoder = MessageEncoder::new();
     let bytes = encoder.encode_into_bytes(message.clone()).unwrap();
 
     // Send the STUN request to the server
-    socket.send_to(&bytes, server_addr).unwrap();
+    socket.send_to(&bytes, server_addr).await.unwrap();
 
     // Wait for the STUN response
     let mut response_bytes = [0; 1024];
-    let (bytes_received, _src_addr) = socket.recv_from(&mut response_bytes).unwrap();
+    let (bytes_received, _src_addr) = socket.recv_from(&mut response_bytes).await.unwrap();
 
-    let mut addresses = Addresses {
-        lo_source: String::from(lo_addr),
-        mapped: "".to_string(),
-        xor_mapped: "".to_string(),
-    };
     // Decode the STUN response
     let mut decoder = MessageDecoder::<Attribute>::new();
     let to_decode = &response_bytes[..bytes_received];
@@ -61,11 +64,9 @@ pub fn udp_discovery(stunserver : IpAddr, port: u16) -> Result<Addresses, String
                 match attr {
                     Attribute::MappedAddress(ma) => {
                         addresses.mapped = ma.address().to_string();
-                        // println!("MappedAddress: {}", addresses.mapped);
                     },
                     Attribute::XorMappedAddress(xma) => {
                         addresses.xor_mapped = xma.address().to_string();
-                        // println!("XorMappedAddress: {}", addresses.xor_mapped);
                     },
                     _ => {}
                 }
@@ -78,15 +79,7 @@ pub fn udp_discovery(stunserver : IpAddr, port: u16) -> Result<Addresses, String
 
 
 pub async fn tcp_discovery(stunserver : IpAddr, port: u16) -> Result<Addresses, String> {
-    use port_scanner::local_port_available;
-    let lo_port = 51000;
-    for lo_port in 51000..53000 {
-        let is_available = local_port_available(lo_port);
-        if is_available {
-            break;
-        }
-    }
-    
+    let lo_port = utils::get_available_port();
     let lo_addr = format!("0.0.0.0:{}", lo_port);
     let socket = tokio::net::TcpSocket::new_v4();
     socket.unwrap().bind(lo_addr.parse().unwrap()).unwrap();
